@@ -131,6 +131,8 @@ p3env/
 
 # End of https://www.gitignore.io/api/macos,python
 
-owlpost/data_in/*
-owlpost/data_out/*
+data_out/*
+filters/*
+testing.txt
+citations.txt
 config.yaml
