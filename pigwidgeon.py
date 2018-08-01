@@ -2,12 +2,13 @@ docstr = """
 Pigwidgeon
 Usage:
     pigwidgeon.py (-h | --help)
-    pigwidgeon.py (-a | -r) <config_file>
+    pigwidgeon.py (-a | -r) [-f] <config_file>
 
 Options:
  -h --help        Show this message and exit
  -a --api         Use VIVO api to upload data immediately
  -r --rdf         Produce rdf files with data
+ -f --file        Use XML file to generate PMID list
  """
 
 from docopt import docopt
@@ -15,6 +16,7 @@ import os
 import os.path
 import sys
 import datetime
+import xml.etree.ElementTree as ET
 import yaml
 
 from vivo_utils.handlers.pubmed_handler import Citation, PHandler
@@ -27,6 +29,7 @@ from vivo_utils import vivo_log
 CONFIG_PATH = '<config_file>'
 _api = '--api'
 _rdf = '--rdf'
+_file = '--file'
 
 def get_config(config_path):
     try:
@@ -90,7 +93,7 @@ def identify_author(connection, tripler, ulog, db_name):
             index = input("Do any of these match your input? (if none, write -1): ")
             if not index == -1:
                 nnum = choices[int(index)]
-                author_n = nnum
+                author_n = nnum.split(connection.namespace)[-1]
             else:
                 matches = []
 
@@ -117,6 +120,26 @@ def identify_author(connection, tripler, ulog, db_name):
                 exit()
 
     return author_n
+
+def get_premade_list(pmid_file):
+    tree = ET.parse(pmid_file)
+    root = tree.getroot()
+
+    pmids = []
+    for citing in root.iter('Item'):
+        pmid = ''
+        for ident in citing.find('Identifiers').iter():
+            try:
+                if ident.attrib['name'] == 'PMID':
+                    pmid = ident.text
+            except KeyError:
+                pass
+        if pmid:
+            pmids.append(pmid)
+        else:
+            print('No PMID: ' + citing.find('Title').text)
+
+    return pmids
 
 def check_filter(abbrev_filter, name_filter, name):
     cleanfig = get_config(abbrev_filter)
@@ -178,16 +201,17 @@ def process(connection, publication, author, tripler, ulog, db_name, filter_fold
 def add_pub(connection, publication, journal_n, tripler, ulog, db_name):
     pub_type = None
     query_type = None
-    if publication.type == 'Journal Article':
+
+    if 'Journal Article' in publication.types:
         pub_type = 'academic_article'
         query_type = getattr(queries, 'make_academic_article')
-    elif publication.type == 'Letter':
-        pub_type = 'letter'
-        query_type = getattr(queries, 'make_letter')
-    elif publication.type == 'Editorial':
+    elif 'Editorial' in publication.types:
         pub_type = 'editorial'
         query_type = getattr(queries, 'make_editorial_article')
-    elif publication.type == 'Abstract':
+    elif 'Letter' in publication.types:
+        pub_type = 'letter'
+        query_type = getattr(queries, 'make_letter')
+    elif 'Abstract' in publication.types:
         pub_type = 'abstract'
         query_type = getattr(queries, 'make_abstract')
     else:
@@ -241,7 +265,7 @@ def main(args):
 
     connection = Connection(namespace, email, password, update_endpoint, query_endpoint)
     handler = PHandler(email)
-    vivo_log.update_db(connection, db_name)
+    vivo_log.update_db(connection, db_name, ['authors', 'journals', 'publications'])
         
     try:
         now = datetime.datetime.now()
@@ -257,8 +281,11 @@ def main(args):
         
         author = identify_author(connection, tripler, ulog, db_name)
         
-        query = input("Write your pubmed query: ")
-        results = handler.get_data(query, output_file)
+        if args[_file]:
+            q_info = get_premade_list(config.get('input_file'))
+        else:
+            q_info = input("Write your pubmed query: ")
+        results = handler.get_data(q_info, output_file)
         publications = handler.parse_api(results)
 
         for publication in publications:
@@ -276,7 +303,8 @@ def main(args):
         os.remove(db_name)
     except Exception as e:
         os.remove(db_name)
-        exit(e)
+        import traceback
+        exit(traceback.format_exc())
 
 if __name__ == '__main__':
     args = docopt(docstr)
